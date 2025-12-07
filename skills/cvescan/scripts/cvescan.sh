@@ -95,7 +95,13 @@ process_package() {
         for ((i=0; i<num_vulns; i++)); do
             local vuln=$(echo "$response" | jq -c ".vulns[$i]")
 
-            local vuln_id=$(echo "$vuln" | jq -r '.id // "UNKNOWN"')
+            # Prefer CVE ID from aliases, fall back to primary ID (often GHSA)
+            local vuln_id=$(echo "$vuln" | jq -r '
+                (.aliases // []) | map(select(startswith("CVE-"))) | first // .id // "UNKNOWN"')
+            # If jq returned just the filter (no CVE found), use the primary id
+            if [ "$vuln_id" = "null" ] || [ -z "$vuln_id" ]; then
+                vuln_id=$(echo "$vuln" | jq -r '.id // "UNKNOWN"')
+            fi
             local summary=$(echo "$vuln" | jq -r '(.summary // .details // "No description available") | .[0:200]')
             local severity=$(get_severity "$vuln")
             local fix=$(get_fix_version "$vuln")
