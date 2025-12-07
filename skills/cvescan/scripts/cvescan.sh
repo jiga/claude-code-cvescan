@@ -1,6 +1,9 @@
 #!/bin/bash
 # CVEScan - Scan package.json dependencies for known CVE vulnerabilities
 # Uses the OSV (Open Source Vulnerabilities) API
+#
+# Usage: cvescan.sh [package.json] [--deep]
+#   --deep: Scan full dependency tree (requires node_modules to be installed)
 
 set -e
 
@@ -15,13 +18,30 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
-# Get package.json path from argument or use default
-PACKAGE_JSON="${1:-package.json}"
+# Parse arguments
+PACKAGE_JSON="package.json"
+DEEP_SCAN=false
+
+for arg in "$@"; do
+    case $arg in
+        --deep)
+            DEEP_SCAN=true
+            ;;
+        *)
+            if [ -f "$arg" ]; then
+                PACKAGE_JSON="$arg"
+            fi
+            ;;
+    esac
+done
 
 if [ ! -f "$PACKAGE_JSON" ]; then
     echo "{\"error\": \"File not found: $PACKAGE_JSON\"}" >&2
     exit 1
 fi
+
+# Get the directory containing package.json for npm commands
+PACKAGE_DIR=$(dirname "$PACKAGE_JSON")
 
 # Create temp file for results
 RESULTS_FILE=$(mktemp)
@@ -129,17 +149,74 @@ process_package() {
     fi
 }
 
-# Process all dependency types
-for dep_type in dependencies devDependencies optionalDependencies peerDependencies; do
-    deps=$(jq -r ".$dep_type // {} | to_entries[] | \"\(.key)|\(.value)\"" "$PACKAGE_JSON" 2>/dev/null || true)
+# Function to recursively extract packages from npm ls JSON output
+extract_packages_from_npm_ls() {
+    local json="$1"
+    local dep_type="$2"
+
+    # Extract name and version from current level, then recurse into dependencies
+    echo "$json" | jq -r --arg dep_type "$dep_type" '
+        def extract_deps($type):
+            if . == null then empty
+            else
+                to_entries[] |
+                "\(.key)|\(.value.version // "unknown")|\($type)",
+                (.value.dependencies // {} | extract_deps($type))
+            end;
+
+        .dependencies // {} | extract_deps($dep_type)
+    ' 2>/dev/null || true
+}
+
+if [ "$DEEP_SCAN" = true ]; then
+    # Deep scan: use npm ls to get full dependency tree
+    if ! command -v npm &> /dev/null; then
+        echo '{"error": "npm is required for --deep scan but not installed"}' >&2
+        exit 1
+    fi
+
+    # Check if node_modules exists
+    if [ ! -d "$PACKAGE_DIR/node_modules" ]; then
+        echo "{\"error\": \"node_modules not found in $PACKAGE_DIR. Run 'npm install' first for --deep scan.\"}" >&2
+        exit 1
+    fi
+
+    # Get production dependencies
+    prod_deps=$(cd "$PACKAGE_DIR" && npm ls --all --json 2>/dev/null || echo '{}')
+    deps=$(extract_packages_from_npm_ls "$prod_deps" "transitive")
 
     if [ -n "$deps" ]; then
-        while IFS='|' read -r pkg version; do
+        # Create temp file for deduplication (compatible with bash 3.x)
+        SEEN_FILE=$(mktemp)
+
+        while IFS='|' read -r pkg version dep_type; do
             [ -z "$pkg" ] && continue
-            process_package "$pkg" "$version" "$dep_type"
+            [ -z "$version" ] && continue
+            [ "$version" = "unknown" ] && continue
+
+            key="${pkg}@${version}"
+            # Check if we've already seen this package@version
+            if ! grep -qxF "$key" "$SEEN_FILE" 2>/dev/null; then
+                echo "$key" >> "$SEEN_FILE"
+                process_package "$pkg" "$version" "$dep_type"
+            fi
         done <<< "$deps"
+
+        rm -f "$SEEN_FILE"
     fi
-done
+else
+    # Shallow scan: only direct dependencies from package.json
+    for dep_type in dependencies devDependencies optionalDependencies peerDependencies; do
+        deps=$(jq -r ".$dep_type // {} | to_entries[] | \"\(.key)|\(.value)\"" "$PACKAGE_JSON" 2>/dev/null || true)
+
+        if [ -n "$deps" ]; then
+            while IFS='|' read -r pkg version; do
+                [ -z "$pkg" ] && continue
+                process_package "$pkg" "$version" "$dep_type"
+            done <<< "$deps"
+        fi
+    done
+fi
 
 # Read final results
 RESULTS=$(cat "$RESULTS_FILE")
