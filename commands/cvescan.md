@@ -26,7 +26,7 @@ Scan package.json for known CVE vulnerabilities.
 
 3. Run the CVE scanner:
    ```bash
-   bash skills/cvescan/scripts/cvescan.sh "$ARGUMENTS"
+   bash $PLUGIN_DIR/skills/cvescan/scripts/cvescan.sh $ARGUMENTS
    ```
 
 4. Parse the JSON output and present results in a clear table format:
