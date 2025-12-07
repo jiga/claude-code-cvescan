@@ -24,9 +24,9 @@ Scan package.json for known CVE vulnerabilities.
    - If `--deep` is present, run deep scan (full dependency tree)
    - Otherwise, run shallow scan (direct dependencies only)
 
-3. Run the CVE scanner:
+3. Find the plugin root and run the CVE scanner:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/skills/cvescan/scripts/cvescan.sh $ARGUMENTS
+   PLUGIN_ROOT=$(jq -r '.plugins | to_entries[] | select(.key | contains("cvescan")) | .value.installPath' ~/.claude/plugins/installed_plugins.json 2>/dev/null) && bash "$PLUGIN_ROOT/skills/cvescan/scripts/cvescan.sh" $ARGUMENTS
    ```
 
 4. Parse the JSON output and present results in a clear table format:
