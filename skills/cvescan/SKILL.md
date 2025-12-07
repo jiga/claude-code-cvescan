@@ -10,55 +10,71 @@ Scan npm package dependencies for known security vulnerabilities using the OSV (
 
 ## Instructions
 
-When asked to scan for vulnerabilities or review package.json security:
+### 1. Read package.json
 
-### 1. Run the Scanner
+Use the Read tool to get the package.json contents. Extract all dependencies from:
+- `dependencies`
+- `devDependencies`
+- `optionalDependencies`
+- `peerDependencies`
 
-Execute the CVE scanner script:
+### 2. Query OSV API for Each Package
+
+For each package, strip version prefixes (^, ~, >=) and query:
+
 ```bash
-bash scripts/cvescan.sh [path/to/package.json] [--deep]
+curl -s -X POST "https://api.osv.dev/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{"package":{"name":"PACKAGE_NAME","ecosystem":"npm"},"version":"VERSION"}'
 ```
 
-**Options:**
-- No arguments: scans `package.json` in current directory
-- Path argument: scans specified package.json
-- `--deep`: scans full dependency tree (requires node_modules)
+Skip packages with URL versions, git refs, `*`, or `latest`.
 
-### 2. Parse the JSON Output
+### 3. Parse Vulnerability Response
 
-The script returns:
+The API returns:
 ```json
 {
-  "scanned": 45,
-  "vulnerable": 3,
-  "vulnerabilities": [
-    {
-      "package": "lodash",
-      "installed": "4.17.20",
-      "dependencyType": "dependencies",
-      "cve": "CVE-2021-23337",
-      "severity": "HIGH",
-      "summary": "Command Injection vulnerability",
-      "fix": "4.17.21"
-    }
-  ]
+  "vulns": [{
+    "id": "GHSA-xxxx",
+    "aliases": ["CVE-2021-xxxxx"],
+    "summary": "Description",
+    "severity": [{"type": "CVSS_V3", "score": "7.5"}],
+    "affected": [{
+      "ranges": [{
+        "events": [{"introduced": "0"}, {"fixed": "1.2.3"}]
+      }]
+    }]
+  }]
 }
 ```
 
-### 3. Present Results
+Extract:
+- **CVE ID**: Prefer entries from `aliases` starting with "CVE-", else use `id`
+- **Severity**: CVSS score >=9 CRITICAL, >=7 HIGH, >=4 MEDIUM, <4 LOW
+- **Fix version**: From `affected[].ranges[].events[].fixed`
 
-Show a summary table:
+### 4. Present Results
 
 | Package | Installed | Severity | CVE ID | Summary | Fix Version |
 |---------|-----------|----------|--------|---------|-------------|
-| lodash  | 4.17.20   | HIGH     | CVE-2021-23337 | Command Injection | 4.17.21 |
 
-### 4. Provide Fix Commands
+### 5. Provide Fix Commands
 
 ```bash
-npm install lodash@4.17.21
-npm install -D package@version  # for devDependencies
+npm install package@fix_version
+npm install -D package@fix_version  # for devDependencies
 ```
+
+## Deep Scan (--deep)
+
+If requested with `--deep` and `node_modules` exists:
+
+```bash
+npm ls --all --json 2>/dev/null
+```
+
+Parse the JSON to get all transitive dependencies, deduplicate by package@version, then scan each.
 
 ## Severity Levels
 
@@ -68,15 +84,3 @@ npm install -D package@version  # for devDependencies
 | HIGH | >= 7.0 |
 | MEDIUM | >= 4.0 |
 | LOW | < 4.0 |
-
-## What Gets Scanned
-
-- `dependencies` - Production dependencies
-- `devDependencies` - Development dependencies
-- `optionalDependencies` - Optional dependencies
-- `peerDependencies` - Peer dependencies
-
-## Requirements
-
-- `jq` - for JSON parsing (install with `brew install jq`)
-- `curl` - for API requests (usually pre-installed)

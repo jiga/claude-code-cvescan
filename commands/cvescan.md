@@ -9,24 +9,12 @@ Scan package.json for known CVE vulnerabilities.
 
 ## Arguments: $ARGUMENTS
 
-## Instructions
+Use the **cvescan skill** to scan for vulnerabilities. The skill will:
 
-1. **Run the CVE scanner**:
-   ```bash
-   bash scripts/cvescan.sh $ARGUMENTS
-   ```
+1. Find the package.json file (from $ARGUMENTS or current directory)
+2. Query the OSV API for each dependency
+3. Present vulnerabilities in a table with severity, CVE ID, and fix versions
+4. Provide npm install commands to fix issues
 
-2. **Parse the JSON output** and present results in a table:
-   - Show total packages scanned and vulnerabilities found
-   - For each vulnerability: Package, Installed Version, Severity, CVE ID, Fix Version
-
-3. **Provide fix commands**:
-   - For dependencies: `npm install package@version`
-   - For devDependencies: `npm install -D package@version`
-
-4. If no vulnerabilities found, confirm scan completed successfully.
-
-## Options
-
-- Default: Scans direct dependencies from package.json
-- `--deep`: Scans full dependency tree (requires node_modules installed)
+Options:
+- `--deep`: Scan full dependency tree (requires node_modules installed)
