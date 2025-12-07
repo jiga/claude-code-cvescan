@@ -18,10 +18,12 @@ When asked to scan for vulnerabilities or review package.json security:
 
 2. **Run the CVE scanner**
    ```bash
-   bash skills/cvescan/scripts/cvescan.sh [path/to/package.json]
+   bash ${CLAUDE_PLUGIN_ROOT}/skills/cvescan/scripts/cvescan.sh [path/to/package.json]
    ```
 
    If no path is provided, it defaults to `package.json` in the current directory.
+
+   Note: `${CLAUDE_PLUGIN_ROOT}` is automatically set by Claude Code to the plugin's installation directory.
 
 3. **Parse the JSON output**
    The script returns JSON with this structure:
