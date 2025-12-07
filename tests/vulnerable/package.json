@@ -1,0 +1,10 @@
+{
+  "name": "test-cve-2025-55182-vulnerable",
+  "version": "1.0.0",
+  "description": "Test package with vulnerable React Server DOM packages (CVE-2025-55182)",
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-server-dom-webpack": "19.1.0"
+  }
+}

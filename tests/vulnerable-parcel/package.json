@@ -1,0 +1,10 @@
+{
+  "name": "test-cve-2025-55182-parcel",
+  "version": "1.0.0",
+  "description": "Test package with vulnerable react-server-dom-parcel (CVE-2025-55182)",
+  "dependencies": {
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-server-dom-parcel": "19.0.0"
+  }
+}

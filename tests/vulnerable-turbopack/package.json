@@ -1,0 +1,10 @@
+{
+  "name": "test-cve-2025-55182-turbopack",
+  "version": "1.0.0",
+  "description": "Test package with vulnerable react-server-dom-turbopack (CVE-2025-55182)",
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-server-dom-turbopack": "19.2.0"
+  }
+}

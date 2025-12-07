@@ -1,0 +1,35 @@
+{
+  "name": "jiga-plugins",
+  "owner": {
+    "name": "j2p2",
+    "url": "https://github.com/jiga"
+  },
+  "metadata": {
+    "description": "Claude Code plugins by j2p2",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cvescan",
+      "source": ".",
+      "description": "Scan package.json dependencies for known CVE vulnerabilities using the OSV database",
+      "version": "1.0.0",
+      "author": {
+        "name": "j2p2",
+        "url": "https://github.com/jiga"
+      },
+      "homepage": "https://github.com/jiga/claude-code-cvescan",
+      "repository": "https://github.com/jiga/claude-code-cvescan",
+      "license": "MIT",
+      "keywords": [
+        "security",
+        "cve",
+        "vulnerabilities",
+        "npm",
+        "osv",
+        "audit"
+      ],
+      "category": "security"
+    }
+  ]
+}

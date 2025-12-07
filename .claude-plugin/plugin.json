@@ -1,0 +1,27 @@
+{
+  "name": "cvescan",
+  "version": "1.0.0",
+  "description": "Scan package.json dependencies for known CVE vulnerabilities using the OSV (Open Source Vulnerabilities) database",
+  "author": {
+    "name": "j2p2",
+    "url": "https://github.com/jiga"
+  },
+  "homepage": "https://github.com/jiga/claude-code-cvescan",
+  "repository": "https://github.com/jiga/claude-code-cvescan",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "cve",
+    "vulnerabilities",
+    "npm",
+    "osv",
+    "package.json",
+    "audit",
+    "scanning"
+  ],
+  "commands": [
+    "./commands/cvescan.md"
+  ],
+  "agents": [],
+  "hooks": {}
+}

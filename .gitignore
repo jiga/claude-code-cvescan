@@ -1,0 +1,6 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local Claude settings (users will have their own)
+.claude/settings.local.json
