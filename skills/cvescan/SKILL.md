@@ -12,28 +12,19 @@ Scan npm package dependencies for known security vulnerabilities using the OSV (
 
 When asked to scan for vulnerabilities or review package.json security:
 
-### 1. Find the Scanner Script
+### 1. Run the Scanner
 
-Look up the plugin installation path:
+Execute the CVE scanner script:
 ```bash
-jq -r '.plugins | to_entries[] | select(.key | contains("cvescan")) | .value.installPath' ~/.claude/plugins/installed_plugins.json
+bash scripts/cvescan.sh [path/to/package.json] [--deep]
 ```
-
-### 2. Run the Scanner
-
-Execute the script with the path from step 1:
-```bash
-bash <PLUGIN_PATH>/skills/cvescan/scripts/cvescan.sh [path/to/package.json] [--deep]
-```
-
-Replace `<PLUGIN_PATH>` with the actual path returned from step 1.
 
 **Options:**
 - No arguments: scans `package.json` in current directory
 - Path argument: scans specified package.json
 - `--deep`: scans full dependency tree (requires node_modules)
 
-### 3. Parse the JSON Output
+### 2. Parse the JSON Output
 
 The script returns:
 ```json
@@ -54,7 +45,7 @@ The script returns:
 }
 ```
 
-### 4. Present Results
+### 3. Present Results
 
 Show a summary table:
 
@@ -62,7 +53,7 @@ Show a summary table:
 |---------|-----------|----------|--------|---------|-------------|
 | lodash  | 4.17.20   | HIGH     | CVE-2021-23337 | Command Injection | 4.17.21 |
 
-### 5. Provide Fix Commands
+### 4. Provide Fix Commands
 
 ```bash
 npm install lodash@4.17.21
