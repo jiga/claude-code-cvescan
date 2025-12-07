@@ -5,41 +5,66 @@ allowed-tools: Bash, Read, Glob
 
 # CVE Scan
 
-Scan package.json for known CVE vulnerabilities.
+Scan package.json for known CVE vulnerabilities using the OSV (Open Source Vulnerabilities) database.
 
-## Usage
+## Arguments
 
-```
-/cvescan [path/to/package.json] [--deep]
-```
+$ARGUMENTS
 
-- **Default**: Scans only direct dependencies listed in package.json
-- **--deep**: Scans the full dependency tree (all transitive dependencies). Requires `node_modules` to be installed.
+- If a path is provided, scan that package.json
+- If `--deep` is included, scan full dependency tree (requires node_modules)
+- Default: scan `package.json` in current directory
 
 ## Instructions
 
-1. Find the package.json file at: $ARGUMENTS (or use `package.json` in current directory if not specified)
+### 1. Read package.json
 
-2. Parse arguments to determine scan mode:
-   - If `--deep` is present, run deep scan (full dependency tree)
-   - Otherwise, run shallow scan (direct dependencies only)
+Use the Read tool to read the package.json file (from $ARGUMENTS path or current directory).
 
-3. Find the plugin root and run the CVE scanner:
-   ```bash
-   PLUGIN_ROOT=$(jq -r '.plugins | to_entries[] | select(.key | contains("cvescan")) | .value.installPath' ~/.claude/plugins/installed_plugins.json 2>/dev/null) && bash "$PLUGIN_ROOT/skills/cvescan/scripts/cvescan.sh" $ARGUMENTS
-   ```
+### 2. Scan Dependencies
 
-4. Parse the JSON output and present results in a clear table format:
-   - Show total packages scanned
-   - Show number of vulnerabilities found
-   - Show scan mode (shallow/deep)
-   - For each vulnerability, display: Package, Installed Version, Severity, CVE ID, Fix Version
+For each package in `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies`, query the OSV API:
 
-5. Provide actionable fix commands:
-   - For dependencies: `npm install package@version`
-   - For devDependencies: `npm install -D package@version`
-   - For transitive dependencies: Explain which direct dependency pulls it in (if known)
+```bash
+curl -s -X POST "https://api.osv.dev/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{"package":{"name":"PACKAGE_NAME","ecosystem":"npm"},"version":"VERSION"}'
+```
 
-6. If no vulnerabilities found, confirm the scan completed successfully with a clean result.
+Strip version prefixes (^, ~, >=) before querying. Skip URLs, git refs, and `*` versions.
 
-7. If `--deep` scan fails due to missing node_modules, suggest running `npm install` first.
+### 3. Parse Vulnerabilities
+
+From the OSV response:
+- **CVE ID**: Use `aliases[]` entries starting with "CVE-", or fall back to `id`
+- **Severity**: From CVSS score: >=9 CRITICAL, >=7 HIGH, >=4 MEDIUM, <4 LOW
+- **Fix version**: From `affected[].ranges[].events[].fixed`
+
+### 4. Present Results
+
+Show a summary table:
+
+| Package | Installed | Severity | CVE ID | Summary | Fix Version |
+|---------|-----------|----------|--------|---------|-------------|
+
+### 5. Provide Fix Commands
+
+```bash
+npm install package@fix_version
+npm install -D package@fix_version  # for devDependencies
+```
+
+### Deep Scan (--deep flag)
+
+If `--deep` is requested:
+1. Check if `node_modules` exists
+2. Run `npm ls --all --json` to get full dependency tree
+3. Scan each unique package@version combination
+4. Report which packages are transitive dependencies
+
+## No Vulnerabilities
+
+If no vulnerabilities found, report:
+```
+✓ Scanned X packages - no vulnerabilities found
+```

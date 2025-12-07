@@ -12,52 +12,95 @@ Scan npm package dependencies for known security vulnerabilities using the OSV (
 
 When asked to scan for vulnerabilities or review package.json security:
 
-1. **Find the package.json file**
-   - Look in the current directory or user-specified path
-   - Read the file to understand the project's dependencies
+### 1. Find and Read package.json
 
-2. **Run the CVE scanner**
-   ```bash
-   PLUGIN_ROOT=$(jq -r '.plugins | to_entries[] | select(.key | contains("cvescan")) | .value.installPath' ~/.claude/plugins/installed_plugins.json 2>/dev/null) && bash "$PLUGIN_ROOT/skills/cvescan/scripts/cvescan.sh" [path/to/package.json]
-   ```
+Use the Read tool to read the package.json file from the current directory or user-specified path.
 
-   If no path is provided, it defaults to `package.json` in the current directory.
+### 2. Query OSV API for Each Dependency
 
-3. **Parse the JSON output**
-   The script returns JSON with this structure:
-   ```json
-   {
-     "scanned": 45,
-     "vulnerable": 3,
-     "vulnerabilities": [
-       {
-         "package": "lodash",
-         "installed": "4.17.20",
-         "dependencyType": "dependencies",
-         "cve": "GHSA-xxxx-xxxx-xxxx",
-         "severity": "HIGH",
-         "summary": "Description of the vulnerability",
-         "fix": "4.17.21"
-       }
-     ]
-   }
-   ```
+For each package in `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies`, query the OSV API:
 
-4. **Present results clearly**
+```bash
+curl -s -X POST "https://api.osv.dev/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{"package":{"name":"PACKAGE_NAME","ecosystem":"npm"},"version":"VERSION"}'
+```
 
-   If vulnerabilities are found, present them in a table:
+Example for a single package:
+```bash
+curl -s -X POST "https://api.osv.dev/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{"package":{"name":"lodash","ecosystem":"npm"},"version":"4.17.20"}'
+```
 
-   | Package | Installed | Severity | CVE | Fix Version |
-   |---------|-----------|----------|-----|-------------|
-   | lodash  | 4.17.20   | HIGH     | GHSA-xxx | 4.17.21 |
+### 3. Parse the Response
 
-5. **Suggest fixes**
+The OSV API returns vulnerabilities in this format:
+```json
+{
+  "vulns": [
+    {
+      "id": "GHSA-xxxx-xxxx-xxxx",
+      "aliases": ["CVE-2021-xxxxx"],
+      "summary": "Description of vulnerability",
+      "severity": [{"type": "CVSS_V3", "score": "7.5"}],
+      "affected": [
+        {
+          "ranges": [
+            {
+              "events": [
+                {"introduced": "0"},
+                {"fixed": "4.17.21"}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
 
-   For each vulnerability with an available fix:
-   - Show the exact version to upgrade to
-   - Provide the npm command: `npm install package@version`
-   - If it's a devDependency: `npm install -D package@version`
-   - Warn about potential breaking changes for major version bumps
+- **CVE ID**: Prefer `aliases` array entries starting with "CVE-", fall back to `id`
+- **Severity**: Calculate from CVSS score (>=9 CRITICAL, >=7 HIGH, >=4 MEDIUM, <4 LOW)
+- **Fix version**: Look in `affected[].ranges[].events[]` for `fixed` field
+
+### 4. Present Results
+
+Show results in a clear table format:
+
+| Package | Installed | Severity | CVE ID | Summary | Fix Version |
+|---------|-----------|----------|--------|---------|-------------|
+| lodash  | 4.17.20   | HIGH     | CVE-2021-23337 | Command Injection | 4.17.21 |
+
+### 5. Provide Fix Commands
+
+```bash
+# For dependencies
+npm install lodash@4.17.21
+
+# For devDependencies
+npm install -D package@version
+```
+
+## Deep Scan (Full Dependency Tree)
+
+If user requests `--deep` scan and `node_modules` exists:
+
+```bash
+npm ls --all --json
+```
+
+This returns the full dependency tree. Parse and scan each unique package@version.
+
+## Severity Levels
+
+| Level | CVSS Score |
+|-------|------------|
+| CRITICAL | >= 9.0 |
+| HIGH | >= 7.0 |
+| MEDIUM | >= 4.0 |
+| LOW | < 4.0 |
 
 ## What Gets Scanned
 
@@ -66,31 +109,16 @@ When asked to scan for vulnerabilities or review package.json security:
 - `optionalDependencies` - Optional dependencies
 - `peerDependencies` - Peer dependencies
 
-## Severity Levels
+## Example Workflow
 
-- **CRITICAL** - CVSS score >= 9.0
-- **HIGH** - CVSS score >= 7.0
-- **MEDIUM** - CVSS score >= 4.0
-- **LOW** - CVSS score < 4.0
-
-## Example Response
-
-After scanning, provide a summary like:
-
-```
-Scanned 45 packages, found 3 vulnerabilities:
-
-| Package | Version | Severity | Issue | Fix |
-|---------|---------|----------|-------|-----|
-| lodash | 4.17.20 | HIGH | Command Injection | 4.17.21 |
-| minimist | 1.2.5 | CRITICAL | Prototype Pollution | 1.2.6 |
-
-Recommended fixes:
-npm install lodash@4.17.21 minimist@1.2.6
-```
+1. Read package.json
+2. Extract all dependencies with versions
+3. For each dependency, call OSV API
+4. Collect vulnerabilities
+5. Present summary table
+6. Suggest npm install commands for fixes
 
 ## Requirements
 
-The scanner requires:
-- `curl` - for API requests
-- `jq` - for JSON parsing (install with `brew install jq` on macOS)
+- `curl` - for API requests (usually pre-installed)
+- Internet access to query https://api.osv.dev
