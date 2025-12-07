@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "cvescan",
-      "source": ".",
+      "source": "./",
       "description": "Scan package.json dependencies for known CVE vulnerabilities using the OSV database",
       "version": "1.0.0",
       "author": {
