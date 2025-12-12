@@ -7,6 +7,14 @@
 
 set -e
 
+# Cleanup handler for temp files
+RESULTS_FILE=""
+SEEN_FILE=""
+cleanup() {
+    rm -f "$RESULTS_FILE" "$SEEN_FILE" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
 # Check dependencies
 if ! command -v jq &> /dev/null; then
     echo '{"error": "jq is required but not installed. Install with: brew install jq"}' >&2
@@ -51,40 +59,157 @@ SCANNED=0
 
 # Function to strip semver prefixes and get base version
 strip_version() {
-    echo "$1" | sed -E 's/^[\^~>=<]*//; s/\s.*$//'
+    local v="$1"
+    # Remove common prefixes: ^, ~, >=, <=, >, <, =
+    v=$(echo "$v" | sed -E 's/^[\^~>=<]+//')
+    # If it still contains spaces or complex operators, return empty (can't resolve)
+    if [[ "$v" =~ [\ \|] ]] || [[ "$v" == *"||"* ]]; then
+        echo ""
+        return
+    fi
+    # Remove any trailing range parts (e.g., "1.2.3 - 2.0.0" -> "1.2.3")
+    echo "$v" | sed -E 's/\s.*$//'
 }
 
-# Function to query OSV API for a package
+# Function to query OSV API for a package with timeout and retry
 query_osv() {
     local pkg="$1"
     local version="$2"
+    local retries=3
+    local delay=1
+    local response=""
 
-    curl -s -X POST "https://api.osv.dev/v1/query" \
-        -H "Content-Type: application/json" \
-        -d "{\"package\":{\"name\":\"$pkg\",\"ecosystem\":\"npm\"},\"version\":\"$version\"}" \
-        2>/dev/null
+    for ((attempt=1; attempt<=retries; attempt++)); do
+        response=$(curl -s --max-time 30 -X POST "https://api.osv.dev/v1/query" \
+            -H "Content-Type: application/json" \
+            -d "{\"package\":{\"name\":\"$pkg\",\"ecosystem\":\"npm\"},\"version\":\"$version\"}" \
+            2>/dev/null) || true
+
+        # Check if we got a valid JSON response
+        if [ -n "$response" ] && echo "$response" | jq -e . >/dev/null 2>&1; then
+            echo "$response"
+            return 0
+        fi
+
+        # Wait before retry with exponential backoff
+        if [ $attempt -lt $retries ]; then
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+    done
+
+    # Return empty object on failure
+    echo '{}'
 }
 
-# Function to extract fix version from OSV response
+# Function to compare semver versions (returns 0 if v1 >= v2, 1 otherwise)
+# Simplified comparison - compares major.minor.patch numerically
+semver_gte() {
+    local v1="$1"
+    local v2="$2"
+
+    # Extract major.minor.patch, ignoring prerelease tags
+    local v1_base=$(echo "$v1" | sed -E 's/[-+].*//')
+    local v2_base=$(echo "$v2" | sed -E 's/[-+].*//')
+
+    # Split into components
+    IFS='.' read -r v1_major v1_minor v1_patch <<< "$v1_base"
+    IFS='.' read -r v2_major v2_minor v2_patch <<< "$v2_base"
+
+    # Default to 0 if empty
+    v1_major=${v1_major:-0}; v1_minor=${v1_minor:-0}; v1_patch=${v1_patch:-0}
+    v2_major=${v2_major:-0}; v2_minor=${v2_minor:-0}; v2_patch=${v2_patch:-0}
+
+    # Compare
+    if [ "$v1_major" -gt "$v2_major" ] 2>/dev/null; then return 0; fi
+    if [ "$v1_major" -lt "$v2_major" ] 2>/dev/null; then return 1; fi
+    if [ "$v1_minor" -gt "$v2_minor" ] 2>/dev/null; then return 0; fi
+    if [ "$v1_minor" -lt "$v2_minor" ] 2>/dev/null; then return 1; fi
+    if [ "$v1_patch" -ge "$v2_patch" ] 2>/dev/null; then return 0; fi
+    return 1
+}
+
+# Function to extract fix version from OSV response for a specific installed version
+# Finds the affected range that contains the installed version and returns its fix
 get_fix_version() {
     local vuln="$1"
-    echo "$vuln" | jq -r '
-        [.affected[]? | .ranges[]? | .events[]? | select(.fixed != null) | .fixed] | first // "No fix available"'
+    local installed="$2"
+    local pkg_name="$3"
+
+    # Extract all affected ranges for this package with introduced and fixed versions
+    local ranges=$(echo "$vuln" | jq -r --arg pkg "$pkg_name" '
+        .affected[]? |
+        select(.package.name == $pkg) |
+        .ranges[]? |
+        select(.type == "SEMVER") |
+        .events as $events |
+        ([$events[]? | select(.introduced != null) | .introduced] | first) as $intro |
+        ([$events[]? | select(.fixed != null) | .fixed] | first) as $fix |
+        select($intro != null and $fix != null) |
+        "\($intro)|\($fix)"
+    ' 2>/dev/null)
+
+    # Find the range where installed version falls
+    local best_fix=""
+    while IFS='|' read -r introduced fixed; do
+        [ -z "$introduced" ] && continue
+        [ -z "$fixed" ] && continue
+
+        # Check if installed >= introduced AND installed < fixed
+        if semver_gte "$installed" "$introduced"; then
+            # This range's introduced version is <= installed
+            # Check if this is a better match (higher introduced version = more specific)
+            if [ -z "$best_fix" ]; then
+                best_fix="$fixed"
+            else
+                # Prefer the fix from the range with higher introduced version
+                local current_intro=$(echo "$ranges" | grep "|$best_fix$" | head -1 | cut -d'|' -f1)
+                if semver_gte "$introduced" "$current_intro" 2>/dev/null; then
+                    best_fix="$fixed"
+                fi
+            fi
+        fi
+    done <<< "$ranges"
+
+    if [ -n "$best_fix" ]; then
+        echo "$best_fix"
+    else
+        # Fallback: just get the first fix version available
+        echo "$vuln" | jq -r '
+            [.affected[]? | .ranges[]? | .events[]? | select(.fixed != null) | .fixed] | first // "No fix available"'
+    fi
 }
 
 # Function to get severity from OSV response
 get_severity() {
     local vuln="$1"
+    # First try database_specific.severity (already a string like "HIGH", "CRITICAL")
+    # Then try to parse CVSS vector string to extract base score
     echo "$vuln" | jq -r '
         .database_specific.severity //
-        (if .severity then
-            (.severity[] | select(.type == "CVSS_V3") | .score) as $score |
-            if $score >= 9 then "CRITICAL"
-            elif $score >= 7 then "HIGH"
-            elif $score >= 4 then "MEDIUM"
-            else "LOW"
+        (
+            (.severity[]? | select(.type == "CVSS_V3" or .type == "CVSS_V4") | .score) as $cvss |
+            if $cvss then
+                # CVSS vector format: "CVSS:3.1/AV:N/AC:L/..." - we need to calculate from metrics
+                # Or it might be just the score number in some cases
+                # Try to extract numeric score if present, otherwise use the severity string
+                if ($cvss | type) == "number" then
+                    if $cvss >= 9 then "CRITICAL"
+                    elif $cvss >= 7 then "HIGH"
+                    elif $cvss >= 4 then "MEDIUM"
+                    else "LOW"
+                    end
+                else
+                    # Its a vector string - map common patterns
+                    if ($cvss | contains("A:H") or contains("I:H") or contains("C:H")) and ($cvss | contains("S:C")) then "CRITICAL"
+                    elif ($cvss | contains("A:H")) or (($cvss | contains("I:H") or contains("C:H")) and ($cvss | contains("AC:L"))) then "HIGH"
+                    elif ($cvss | contains("A:L") or contains("I:L") or contains("C:L")) then "MEDIUM"
+                    else "LOW"
+                    end
+                end
+            else "UNKNOWN"
             end
-        else "UNKNOWN" end) // "UNKNOWN"'
+        ) // "UNKNOWN"'
 }
 
 # Process a single package
@@ -95,6 +220,12 @@ process_package() {
 
     # Strip version prefix
     local clean_version=$(strip_version "$version")
+
+    # Skip if version couldn't be resolved (complex ranges)
+    if [ -z "$clean_version" ]; then
+        echo "Warning: Skipping $pkg - complex version range '$version' cannot be resolved without lock file" >&2
+        return
+    fi
 
     # Skip if version is a URL, git ref, or file path
     if [[ "$clean_version" =~ ^(http|git|file|github:|/) ]] || [[ "$version" == "latest" ]] || [[ "$version" == "*" ]]; then
@@ -115,16 +246,17 @@ process_package() {
         for ((i=0; i<num_vulns; i++)); do
             local vuln=$(echo "$response" | jq -c ".vulns[$i]")
 
-            # Prefer CVE ID from aliases, fall back to primary ID (often GHSA)
+            # Extract CVE ID: prefer CVE- prefixed alias, fall back to primary ID (GHSA)
             local vuln_id=$(echo "$vuln" | jq -r '
-                (.aliases // []) | map(select(startswith("CVE-"))) | first // .id // "UNKNOWN"')
-            # If jq returned just the filter (no CVE found), use the primary id
-            if [ "$vuln_id" = "null" ] || [ -z "$vuln_id" ]; then
-                vuln_id=$(echo "$vuln" | jq -r '.id // "UNKNOWN"')
-            fi
+                if .aliases then
+                    (.aliases | map(select(startswith("CVE-"))) | first) // .id
+                else
+                    .id
+                end // "UNKNOWN"')
+
             local summary=$(echo "$vuln" | jq -r '(.summary // .details // "No description available") | .[0:200]')
             local severity=$(get_severity "$vuln")
-            local fix=$(get_fix_version "$vuln")
+            local fix=$(get_fix_version "$vuln" "$clean_version" "$pkg")
 
             # Add to results file
             local current=$(cat "$RESULTS_FILE")
